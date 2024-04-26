@@ -1,0 +1,9 @@
+# Verify licences
+#   find -name "*.go" -not -name catalog.go -not -name "*_mock.go" -not -name "*.gen.go" -exec go run github.com/palantir/go-license@v1.35.0 --config .license.yml --verify {} \;
+# Add license to files
+#   find -name "*.go" -not -name catalog.go -not -name "*_mock.go" -not -name "*.gen.go" -exec go run github.com/palantir/go-license@v1.35.0 --config .license.yml {} \;
+
+header: |
+  // Copyright {{YEAR}} codestation. All rights reserved.
+  // Use of this source code is governed by a MIT-license
+  // that can be found in the LICENSE file.

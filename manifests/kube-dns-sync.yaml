@@ -1,0 +1,75 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kube-dns-sync-config
+data:
+  DNS_PROVIDER: "cloudflare"
+  DNS_HOSTNAME: "app"
+  DNS_ZONE: "example.com"
+  WATCH_TIMEOUT: "5m"
+  NODE_LABELS: "role=worker"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kube-dns-sync-secret
+type: Opaque
+stringData:
+  CLOUDFLARE_API_TOKEN: "cloudflare-api-token"
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-dns-sync
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kube-dns-sync
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+      - list
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-dns-sync
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kube-dns-sync
+subjects:
+  - kind: ServiceAccount
+    name: kube-dns-sync
+    namespace: default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-dns-sync
+  labels:
+    app: kube-dns-sync
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kube-dns-sync
+  template:
+    metadata:
+      labels:
+        app: kube-dns-sync
+    spec:
+      serviceAccountName: kube-dns-sync
+      containers:
+        - name: kube-dns-sync
+          image: ghcr.io/codestation/kube-dns-sync:latest
+          envFrom:
+            - configMapRef:
+                name: kube-dns-sync-config
+            - secretRef:
+                name: kube-dns-sync-secret
