@@ -158,6 +158,7 @@ func main() {
 	f.String("kubeconfig", "", "Path to the kubeconfig file")
 	f.Duration("watch-interval", time.Minute, "Interval to watch nodes")
 	f.String("node-labels", "", "Labels to filter nodes")
+	f.String("log-format", "", "Log format (logfmt, json)")
 	f.Bool("version", false, "Print version information")
 
 	err = f.Parse(os.Args[1:])
