@@ -110,7 +110,7 @@ func watchNodes(ctx context.Context, clientset *kubernetes.Clientset, provider P
 }
 
 func main() {
-	if os.Args[1] == "version" {
+	if len(os.Args) > 1 && os.Args[1] == "version" {
 		slog.Info("kube-dns-sync",
 			slog.String("version", Tag),
 			slog.String("commit", Revision),
