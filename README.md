@@ -10,29 +10,26 @@ accordingly.
 
 The application uses the following environment variables:
 
-- `LOG_FORMAT`: Determines the format of the logs. It can be set to `json` or `logfmt`. If it's not set and the output 
+- `APP_LOG_FORMAT`: Determines the format of the logs. It can be set to `json` or `logfmt`. If it's not set and the 
+  output 
 is not an interactive terminal, it defaults to `json`.
 
-- `DNS_PROVIDER`: Specifies the DNS provider to use. It can be set to `cloudflare`, `linode` or `digitalocean`.
+- `APP_DNS_PROVIDER`: Specifies the DNS provider to use. It can be set to `cloudflare`, `linode` or `digitalocean`.
 
-- `DNS_HOSTNAME`: Specifies the hostname for the DNS records.
+- `APP_DNS_HOSTNAME`: Specifies the hostname for the DNS records.
 
-- `DNS_ZONE`: Specifies the DNS zone.
+- `APP_DNS_ZONE`: Specifies the DNS zone.
 
-- `DNS_TTL`: Specifies the TTL for the DNS records. If not set, it defaults to the provider's default TTL.
+- `APP_DNS_TTL`: Specifies the TTL for the DNS records. If not set, it defaults to the provider's default TTL.
 
-- `CLOUDFLARE_API_TOKEN`: Required if `DNS_PROVIDER` is set to `cloudflare`. It's the API token for Cloudflare.
+- `APP_DNS_TOKEN`: Specifies the API token for the DNS provider.
 
-- `LINODE_TOKEN`: Required if `DNS_PROVIDER` is set to `linode`. It's the API token for Linode.
+- `APP_KUBECONFIG`: Path to the kubeconfig file. If not set, it defaults to the internal cluster config.
 
-- `DIGITALOCEAN_TOKEN`: Required if `DNS_PROVIDER` is set to `digitalocean`. It's the API token for DigitalOcean.
-
-- `KUBECONFIG`: Path to the kubeconfig file. If not set, it defaults to the internal cluster config.
-
-- `WATCH_INTERVAL`: Specifies the interval for watching the Kubernetes nodes. It's a duration string
+- `APP_WATCH_INTERVAL`: Specifies the interval for watching the Kubernetes nodes. It's a duration string
 (e.g., "5m" for 5 minutes). If not set, it defaults to 1 minute.
 
-- `NODE_LABELS`: Specifies the labels of the Kubernetes nodes to watch.
+- `APP_NODE_LABELS`: Specifies the labels of the Kubernetes nodes to watch.
 
 ## Kubernetes configuration
 

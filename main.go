@@ -11,12 +11,17 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/knadh/koanf/providers/env"
+	"github.com/knadh/koanf/providers/posflag"
+	"github.com/knadh/koanf/v2"
 	"github.com/libdns/cloudflare"
 	"github.com/libdns/digitalocean"
 	"github.com/libdns/libdns"
 	"github.com/libdns/linode"
+	flag "github.com/spf13/pflag"
 	"golang.org/x/term"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -128,8 +133,48 @@ func watchNodes(ctx context.Context, clientset *kubernetes.Clientset, provider P
 	return nil
 }
 
+var k = koanf.New(".")
+
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "version" {
+	err := k.Load(env.Provider("APP_", ".", func(s string) string {
+		return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(s, "APP_")), "_", ".")
+	}), nil)
+	if err != nil {
+		slog.Error("Failed to load environment variables", "error", err)
+		os.Exit(1)
+	}
+
+	f := flag.NewFlagSet("config", flag.ContinueOnError)
+	f.Usage = func() {
+		fmt.Println(f.FlagUsages())
+		os.Exit(0)
+	}
+
+	f.String("dns-provider", "", "DNS provider (cloudflare, digitalocean, linode)")
+	f.String("dns-hostname", "", "DNS hostname")
+	f.String("dns-zone", "", "DNS zone")
+	f.Duration("dns-ttl", 0, "DNS TTL")
+	f.String("dns-token", "", "DNS Provider API token")
+	f.String("kubeconfig", "", "Path to the kubeconfig file")
+	f.Duration("watch-interval", time.Minute, "Interval to watch nodes")
+	f.String("node-labels", "", "Labels to filter nodes")
+	f.Bool("version", false, "Print version information")
+
+	err = f.Parse(os.Args[1:])
+	if err != nil {
+		slog.Error("Failed to parse flags", "error", err)
+		os.Exit(1)
+	}
+
+	err = k.Load(posflag.ProviderWithValue(f, ".", k, func(key string, value string) (string, any) {
+		return strings.ReplaceAll(key, "-", "."), value
+	}), nil)
+	if err != nil {
+		slog.Error("Failed to load flags", "error", err)
+		os.Exit(1)
+	}
+
+	if k.Bool("version") {
 		slog.Info("kube-dns-sync",
 			slog.String("version", Tag),
 			slog.String("commit", Revision),
@@ -141,7 +186,7 @@ func main() {
 
 	isTerminal := term.IsTerminal(int(os.Stdout.Fd()))
 
-	switch os.Getenv("LOG_FORMAT") {
+	switch k.String("log.format") {
 	case "json":
 		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	case "logfmt":
@@ -150,79 +195,38 @@ func main() {
 			slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 		}
 	default:
-		slog.Error("Invalid LOG_FORMAT environment variable")
+		slog.Error("Invalid log format specified")
 		os.Exit(1)
 	}
 
 	// Get DNS provider and hostname from environment variables
-	dnsProvider := os.Getenv("DNS_PROVIDER")
-	dnsHostname := os.Getenv("DNS_HOSTNAME")
-	dnsZone := os.Getenv("DNS_ZONE")
+	dnsProvider := k.String("dns.provider")
+	dnsHostname := k.String("dns.hostname")
+	dnsZone := k.String("dns.zone")
+	dnsToken := k.String("dns.token")
 
-	if dnsProvider == "" || dnsHostname == "" || dnsZone == "" {
-		slog.Error("Missing DNS_PROVIDER, DNS_HOST and DNS_ZONE environment variable")
+	if dnsProvider == "" || dnsHostname == "" || dnsZone == "" || dnsToken == "" {
+		slog.Error("Missing DNS provider, host, zone and token values")
 		os.Exit(1)
-	}
-
-	dnsTTL := time.Duration(0)
-	ttlValue := os.Getenv("DNS_TTL")
-	if ttlValue != "" {
-		ttl, err := time.ParseDuration(ttlValue)
-		if err != nil {
-			slog.Error("Failed to parse DNS_TTL", "error", err)
-			os.Exit(1)
-		}
-		dnsTTL = ttl
 	}
 
 	var provider Provider
 
 	switch dnsProvider {
 	case "cloudflare":
-		cloudflareAPIToken := os.Getenv("CLOUDFLARE_API_TOKEN")
-		if cloudflareAPIToken == "" {
-			slog.Error("Missing CLOUDFLARE_API_TOKEN environment variable")
-			os.Exit(1)
-		}
-		provider = &cloudflare.Provider{APIToken: cloudflareAPIToken}
+		provider = &cloudflare.Provider{APIToken: dnsToken}
 	case "digitalocean":
-		digitaloceanToken := os.Getenv("DIGITALOCEAN_TOKEN")
-		if digitaloceanToken == "" {
-			slog.Error("Missing DIGITALOCEAN_TOKEN environment variable")
-			os.Exit(1)
-		}
-		provider = &digitalocean.Provider{APIToken: digitaloceanToken}
+		provider = &digitalocean.Provider{APIToken: dnsToken}
 	case "linode":
-		linodeToken := os.Getenv("LINODE_TOKEN")
-		if linodeToken == "" {
-			slog.Error("Missing LINODE_TOKEN environment variable")
-			os.Exit(1)
-		}
-		provider = &linode.Provider{APIToken: linodeToken}
+		provider = &linode.Provider{APIToken: dnsToken}
 	}
 
-	kubeConfigPath := os.Getenv("KUBECONFIG")
+	kubeConfigPath := k.String("kubeconfig")
 	config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
 	if err != nil {
 		slog.Error("Failed to create Kubernetes config", "error", err)
 		os.Exit(1)
 	}
-
-	var interval time.Duration
-	intervalValue := os.Getenv("WATCH_INTERVAL")
-	if intervalValue == "" {
-		interval = 1 * time.Minute
-	} else {
-		parsedInterval, err := time.ParseDuration(intervalValue)
-		if err != nil {
-			slog.Error("Failed to parse WATCH_INTERVAL", "error", err)
-			os.Exit(1)
-		}
-
-		interval = parsedInterval
-	}
-
-	labels := os.Getenv("NODE_LABELS")
 
 	// creates the clientset
 	clientset, err := kubernetes.NewForConfig(config)
@@ -246,8 +250,11 @@ func main() {
 	dnsConfig := DNSConfig{
 		Hostname: dnsHostname,
 		Zone:     dnsZone,
-		TTL:      dnsTTL,
+		TTL:      k.Duration("dns.ttl"),
 	}
+
+	interval := k.Duration("watch.interval")
+	labels := k.String("node.labels")
 
 	go func(ctx context.Context) {
 		for {
