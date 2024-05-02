@@ -178,18 +178,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	var timeout time.Duration
-	timeoutValue := os.Getenv("WATCH_TIMEOUT")
-	if timeoutValue == "" {
-		timeout = 1 * time.Minute
+	var interval time.Duration
+	intervalValue := os.Getenv("WATCH_INTERVAL")
+	if intervalValue == "" {
+		interval = 1 * time.Minute
 	} else {
-		parsedTimeout, err := time.ParseDuration(timeoutValue)
+		parsedInterval, err := time.ParseDuration(intervalValue)
 		if err != nil {
-			slog.Error("Failed to parse WATCH_TIMEOUT", "error", err)
+			slog.Error("Failed to parse WATCH_INTERVAL", "error", err)
 			os.Exit(1)
 		}
 
-		timeout = parsedTimeout
+		interval = parsedInterval
 	}
 
 	labels := os.Getenv("NODE_LABELS")
@@ -224,7 +224,7 @@ func main() {
 				slog.Info("Exiting...")
 				close(finishChan)
 				return
-			case <-time.After(timeout):
+			case <-time.After(interval):
 			}
 		}
 	}(ctx)

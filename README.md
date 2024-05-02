@@ -27,7 +27,7 @@ is not an interactive terminal, it defaults to `json`.
 
 - `KUBECONFIG`: Path to the kubeconfig file. If not set, it defaults to the internal cluster config.
 
-- `WATCH_TIMEOUT`: Specifies the timeout for watching the Kubernetes nodes. It's a duration string
+- `WATCH_INTERVAL`: Specifies the interval for watching the Kubernetes nodes. It's a duration string
 (e.g., "5m" for 5 minutes). If not set, it defaults to 1 minute.
 
 - `NODE_LABELS`: Specifies the labels of the Kubernetes nodes to watch.
