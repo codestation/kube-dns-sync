@@ -30,21 +30,27 @@ type Provider interface {
 	libdns.RecordDeleter
 }
 
-func syncHostnameIPs(ctx context.Context, provider Provider, dnsZone string, dnsHostname string, addresses []string) error {
-	records, err := provider.GetRecords(ctx, dnsZone)
+type DNSConfig struct {
+	Hostname string
+	Zone     string
+	TTL      time.Duration
+}
+
+func syncHostnameIPs(ctx context.Context, provider Provider, config DNSConfig, addresses []string) error {
+	records, err := provider.GetRecords(ctx, config.Zone)
 	if err != nil {
 		return err
 	}
 
 	var recordsToDelete []libdns.Record
 	for _, record := range records {
-		if record.Name == dnsHostname && record.Type == "A" && !slices.Contains(addresses, record.Value) {
+		if record.Name == config.Hostname && record.Type == "A" && !slices.Contains(addresses, record.Value) {
 			recordsToDelete = append(recordsToDelete, record)
 		}
 	}
 
 	slog.Info("Deleting stale records", "count", len(recordsToDelete))
-	_, err = provider.DeleteRecords(ctx, dnsZone, recordsToDelete)
+	_, err = provider.DeleteRecords(ctx, config.Zone, recordsToDelete)
 	if err != nil {
 		return fmt.Errorf("failed to delete records: %w", err)
 	}
@@ -52,20 +58,21 @@ func syncHostnameIPs(ctx context.Context, provider Provider, dnsZone string, dns
 	var recordsToCreate []libdns.Record
 	for _, address := range addresses {
 		exists := slices.ContainsFunc(records, func(r libdns.Record) bool {
-			return r.Name == dnsHostname && r.Type == "A" && r.Value == address
+			return r.Name == config.Hostname && r.Type == "A" && r.Value == address
 		})
 
 		if !exists {
 			recordsToCreate = append(recordsToCreate, libdns.Record{
 				Type:  "A",
-				Name:  dnsHostname,
+				Name:  config.Hostname,
 				Value: address,
+				TTL:   config.TTL,
 			})
 		}
 	}
 
 	slog.Info("Creating new records", "count", len(recordsToCreate))
-	_, err = provider.SetRecords(ctx, dnsZone, recordsToCreate)
+	_, err = provider.SetRecords(ctx, config.Zone, recordsToCreate)
 	if err != nil {
 		return fmt.Errorf("failed to create records: %w", err)
 	}
@@ -105,7 +112,7 @@ func getClusterExternalIPs(ctx context.Context, clientset *kubernetes.Clientset,
 	return nodes.ResourceVersion, addresses, nil
 }
 
-func watchNodes(ctx context.Context, clientset *kubernetes.Clientset, provider Provider, dnsZone, dnsHostname, labels string) error {
+func watchNodes(ctx context.Context, clientset *kubernetes.Clientset, provider Provider, config DNSConfig, labels string) error {
 	// Get the external IPs of the cluster nodes
 	_, addresses, err := getClusterExternalIPs(ctx, clientset, labels)
 	if err != nil {
@@ -113,7 +120,7 @@ func watchNodes(ctx context.Context, clientset *kubernetes.Clientset, provider P
 	}
 
 	// Sync the external IPs with the DNS provider
-	err = syncHostnameIPs(ctx, provider, dnsZone, dnsHostname, addresses)
+	err = syncHostnameIPs(ctx, provider, config, addresses)
 	if err != nil {
 		return fmt.Errorf("failed to sync hostname IPs: %w", err)
 	}
@@ -155,6 +162,17 @@ func main() {
 	if dnsProvider == "" || dnsHostname == "" || dnsZone == "" {
 		slog.Error("Missing DNS_PROVIDER, DNS_HOST and DNS_ZONE environment variable")
 		os.Exit(1)
+	}
+
+	dnsTTL := time.Duration(0)
+	ttlValue := os.Getenv("DNS_TTL")
+	if ttlValue != "" {
+		ttl, err := time.ParseDuration(ttlValue)
+		if err != nil {
+			slog.Error("Failed to parse DNS_TTL", "error", err)
+			os.Exit(1)
+		}
+		dnsTTL = ttl
 	}
 
 	var provider Provider
@@ -225,9 +243,15 @@ func main() {
 	termChan := make(chan os.Signal, 1)
 	signal.Notify(termChan, os.Interrupt)
 
+	dnsConfig := DNSConfig{
+		Hostname: dnsHostname,
+		Zone:     dnsZone,
+		TTL:      dnsTTL,
+	}
+
 	go func(ctx context.Context) {
 		for {
-			err := watchNodes(ctx, clientset, provider, dnsZone, dnsHostname, labels)
+			err := watchNodes(ctx, clientset, provider, dnsConfig, labels)
 			if err != nil {
 				slog.Error("Failed to watch nodes", "error", err)
 			}
