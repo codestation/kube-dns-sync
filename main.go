@@ -73,6 +73,15 @@ func syncHostnameIPs(ctx context.Context, provider Provider, dnsZone string, dns
 	return nil
 }
 
+func isNodeReady(node corev1.Node) bool {
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
+			return true
+		}
+	}
+	return false
+}
+
 func getClusterExternalIPs(ctx context.Context, clientset *kubernetes.Clientset, labels string) (string, []string, error) {
 	listOptions := metav1.ListOptions{LabelSelector: labels}
 	nodes, err := clientset.CoreV1().Nodes().List(ctx, listOptions)
@@ -82,6 +91,9 @@ func getClusterExternalIPs(ctx context.Context, clientset *kubernetes.Clientset,
 
 	var addresses []string
 	for _, node := range nodes.Items {
+		if !isNodeReady(node) {
+			continue
+		}
 		for _, address := range node.Status.Addresses {
 			if address.Type == corev1.NodeExternalIP {
 				slog.Info("Found external IP", "node", node.Name, "address", address.Address)
