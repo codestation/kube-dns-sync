@@ -1,23 +1,4 @@
 apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: kube-dns-sync-config
-data:
-  DNS_PROVIDER: "cloudflare"
-  DNS_HOSTNAME: "app"
-  DNS_ZONE: "example.com"
-  WATCH_TIMEOUT: "5m"
-  NODE_LABELS: "role=worker"
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: kube-dns-sync-secret
-type: Opaque
-stringData:
-  CLOUDFLARE_API_TOKEN: "cloudflare-api-token"
----
-apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: kube-dns-sync
@@ -68,8 +49,11 @@ spec:
       containers:
         - name: kube-dns-sync
           image: ghcr.io/codestation/kube-dns-sync:latest
+          imagePullPolicy: Always
           envFrom:
             - configMapRef:
                 name: kube-dns-sync-config
+                optional: true
             - secretRef:
                 name: kube-dns-sync-secret
+                optional: true
