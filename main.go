@@ -27,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog/v2"
 )
 
 type Provider interface {
@@ -223,6 +224,8 @@ func main() {
 	}
 
 	kubeConfigPath := k.String("kubeconfig")
+
+	klog.SetSlogLogger(slog.Default())
 	config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
 	if err != nil {
 		slog.Error("Failed to create Kubernetes config", "error", err)
