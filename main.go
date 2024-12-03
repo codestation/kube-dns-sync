@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"os/signal"
 	"slices"
@@ -42,15 +43,29 @@ type DNSConfig struct {
 	TTL      time.Duration
 }
 
-func syncHostnameIPs(ctx context.Context, provider Provider, config DNSConfig, addresses []string) error {
+func syncHostnameIPs(ctx context.Context, provider Provider, config DNSConfig, addresses []netip.Addr) error {
 	records, err := provider.GetRecords(ctx, config.Zone)
 	if err != nil {
 		return err
 	}
 
+	ipv4Addresses := make([]string, 0)
+	ipv6Addresses := make([]string, 0)
+
+	for _, addr := range addresses {
+		if addr.Is4() {
+			ipv4Addresses = append(ipv4Addresses, addr.String())
+		} else {
+			ipv6Addresses = append(ipv6Addresses, addr.String())
+		}
+	}
+
 	var recordsToDelete []libdns.Record
 	for _, record := range records {
-		if record.Name == config.Hostname && record.Type == "A" && !slices.Contains(addresses, record.Value) {
+		if record.Name == config.Hostname && record.Type == "A" && !slices.Contains(ipv4Addresses, record.Value) {
+			recordsToDelete = append(recordsToDelete, record)
+		}
+		if record.Name == config.Hostname && record.Type == "AAAA" && !slices.Contains(ipv6Addresses, record.Value) {
 			recordsToDelete = append(recordsToDelete, record)
 		}
 	}
@@ -62,7 +77,7 @@ func syncHostnameIPs(ctx context.Context, provider Provider, config DNSConfig, a
 	}
 
 	var recordsToCreate []libdns.Record
-	for _, address := range addresses {
+	for _, address := range ipv4Addresses {
 		exists := slices.ContainsFunc(records, func(r libdns.Record) bool {
 			return r.Name == config.Hostname && r.Type == "A" && r.Value == address
 		})
@@ -77,11 +92,28 @@ func syncHostnameIPs(ctx context.Context, provider Provider, config DNSConfig, a
 		}
 	}
 
+	for _, address := range ipv6Addresses {
+		exists := slices.ContainsFunc(records, func(r libdns.Record) bool {
+			return r.Name == config.Hostname && r.Type == "AAAA" && r.Value == address
+		})
+
+		if !exists {
+			recordsToCreate = append(recordsToCreate, libdns.Record{
+				Type:  "AAAA",
+				Name:  config.Hostname,
+				Value: address,
+				TTL:   config.TTL,
+			})
+		}
+	}
+
 	slog.Info("Creating new records", "count", len(recordsToCreate))
 	_, err = provider.SetRecords(ctx, config.Zone, recordsToCreate)
 	if err != nil {
 		return fmt.Errorf("failed to create records: %w", err)
 	}
+
+	slog.Info("Sync complete")
 
 	return nil
 }
@@ -95,14 +127,14 @@ func isNodeReady(node corev1.Node) bool {
 	return false
 }
 
-func getClusterExternalIPs(ctx context.Context, clientset *kubernetes.Clientset, labels string) (string, []string, error) {
+func getClusterExternalIPs(ctx context.Context, clientSet *kubernetes.Clientset, labels string) (string, []netip.Addr, error) {
 	listOptions := metav1.ListOptions{LabelSelector: labels}
-	nodes, err := clientset.CoreV1().Nodes().List(ctx, listOptions)
+	nodes, err := clientSet.CoreV1().Nodes().List(ctx, listOptions)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to list nodes: %w", err)
 	}
 
-	var addresses []string
+	var addresses []netip.Addr
 	for _, node := range nodes.Items {
 		if !isNodeReady(node) {
 			continue
@@ -110,7 +142,12 @@ func getClusterExternalIPs(ctx context.Context, clientset *kubernetes.Clientset,
 		for _, address := range node.Status.Addresses {
 			if address.Type == corev1.NodeExternalIP {
 				slog.Info("Found external IP", "node", node.Name, "address", address.Address)
-				addresses = append(addresses, address.Address)
+				addr, err := netip.ParseAddr(address.Address)
+				if err != nil {
+					slog.Error("Failed to parse address", "address", address.Address, "error", err)
+					continue
+				}
+				addresses = append(addresses, addr)
 			}
 		}
 	}
@@ -118,9 +155,9 @@ func getClusterExternalIPs(ctx context.Context, clientset *kubernetes.Clientset,
 	return nodes.ResourceVersion, addresses, nil
 }
 
-func watchNodes(ctx context.Context, clientset *kubernetes.Clientset, provider Provider, config DNSConfig, labels string) error {
+func watchNodes(ctx context.Context, clientSet *kubernetes.Clientset, provider Provider, config DNSConfig, labels string) error {
 	// Get the external IPs of the cluster nodes
-	_, addresses, err := getClusterExternalIPs(ctx, clientset, labels)
+	_, addresses, err := getClusterExternalIPs(ctx, clientSet, labels)
 	if err != nil {
 		return fmt.Errorf("failed to get cluster external IPs: %w", err)
 	}
