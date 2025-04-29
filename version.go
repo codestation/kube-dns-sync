@@ -1,4 +1,4 @@
-// Copyright 2024 codestation. All rights reserved.
+// Copyright 2025 codestation. All rights reserved.
 // Use of this source code is governed by a MIT-license
 // that can be found in the LICENSE file.
 
@@ -16,7 +16,7 @@ var (
 	Revision = "unknown"
 	// LastCommit indicates the date of the commit
 	LastCommit time.Time
-	// Modified indicates if the binary was built from a unmodified source code
+	// Modified indicates if the binary was built from an unmodified source code
 	Modified = true
 )
 
