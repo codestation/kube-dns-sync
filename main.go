@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -21,8 +22,8 @@ import (
 	"github.com/libdns/cloudflare"
 	"github.com/libdns/digitalocean"
 	"github.com/libdns/libdns"
-	"github.com/libdns/linode"
 	flag "github.com/spf13/pflag"
+	linode "go.megpoid.dev/libdns-linode"
 	"golang.org/x/term"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -43,29 +44,36 @@ type DNSConfig struct {
 	TTL      time.Duration
 }
 
+var ErrNotAddressRecord = errors.New("the type must be an A/AAAA record")
+
+func parseAddress(record libdns.Record) (libdns.Address, error) {
+	r, err := record.RR().Parse()
+	if err != nil {
+		return libdns.Address{}, fmt.Errorf("failed to parse record: %w", err)
+	}
+
+	if v, ok := r.(libdns.Address); ok {
+		return v, nil
+	}
+
+	return libdns.Address{}, ErrNotAddressRecord
+}
+
 func syncHostnameIPs(ctx context.Context, provider Provider, config DNSConfig, addresses []netip.Addr) error {
 	records, err := provider.GetRecords(ctx, config.Zone)
 	if err != nil {
 		return err
 	}
 
-	ipv4Addresses := make([]string, 0)
-	ipv6Addresses := make([]string, 0)
-
-	for _, addr := range addresses {
-		if addr.Is4() {
-			ipv4Addresses = append(ipv4Addresses, addr.String())
-		} else {
-			ipv6Addresses = append(ipv6Addresses, addr.String())
-		}
-	}
-
 	var recordsToDelete []libdns.Record
 	for _, record := range records {
-		if record.Name == config.Hostname && record.Type == "A" && !slices.Contains(ipv4Addresses, record.Value) {
-			recordsToDelete = append(recordsToDelete, record)
+		address, err := parseAddress(record)
+		if err != nil && !errors.Is(err, ErrNotAddressRecord) {
+			slog.Error("Failed to parse record", "name", record.RR().Name, "error", err)
+			continue
 		}
-		if record.Name == config.Hostname && record.Type == "AAAA" && !slices.Contains(ipv6Addresses, record.Value) {
+
+		if address.Name == config.Hostname && !slices.Contains(addresses, address.IP) {
 			recordsToDelete = append(recordsToDelete, record)
 		}
 	}
@@ -77,32 +85,23 @@ func syncHostnameIPs(ctx context.Context, provider Provider, config DNSConfig, a
 	}
 
 	var recordsToCreate []libdns.Record
-	for _, address := range ipv4Addresses {
-		exists := slices.ContainsFunc(records, func(r libdns.Record) bool {
-			return r.Name == config.Hostname && r.Type == "A" && r.Value == address
+	for _, address := range addresses {
+
+		exists := slices.ContainsFunc(records, func(nodeRecord libdns.Record) bool {
+			rAddress, err := parseAddress(nodeRecord)
+			if err != nil && !errors.Is(err, ErrNotAddressRecord) {
+				slog.Error("Failed to parse record", "name", nodeRecord.RR().Name, "error", err)
+				return false
+			}
+
+			return rAddress.Name == config.Hostname && rAddress.IP == address
 		})
 
 		if !exists {
-			recordsToCreate = append(recordsToCreate, libdns.Record{
-				Type:  "A",
-				Name:  config.Hostname,
-				Value: address,
-				TTL:   config.TTL,
-			})
-		}
-	}
-
-	for _, address := range ipv6Addresses {
-		exists := slices.ContainsFunc(records, func(r libdns.Record) bool {
-			return r.Name == config.Hostname && r.Type == "AAAA" && r.Value == address
-		})
-
-		if !exists {
-			recordsToCreate = append(recordsToCreate, libdns.Record{
-				Type:  "AAAA",
-				Name:  config.Hostname,
-				Value: address,
-				TTL:   config.TTL,
+			recordsToCreate = append(recordsToCreate, libdns.Address{
+				Name: config.Hostname,
+				IP:   address,
+				TTL:  config.TTL,
 			})
 		}
 	}

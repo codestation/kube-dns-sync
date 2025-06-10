@@ -9,8 +9,8 @@ require (
 	github.com/libdns/cloudflare v0.2.1
 	github.com/libdns/digitalocean v0.0.0-20250606071607-dfa7af5c2e31
 	github.com/libdns/libdns v1.1.0
-	github.com/libdns/linode v0.4.1
 	github.com/spf13/pflag v1.0.6
+	go.megpoid.dev/libdns-linode v0.0.0-20250610051349-0c3dc2e6a178
 	golang.org/x/term v0.32.0
 	k8s.io/api v0.33.1
 	k8s.io/apimachinery v0.33.1
