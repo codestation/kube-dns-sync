@@ -26,6 +26,10 @@ steps:
         - '${CI_COMMIT_BRANCH}-${CI_COMMIT_SHA:0:10}'
       config:
         from_secret: registry_credentials
+    when:
+      event: 
+        - push
+        - manual
 
   build-tag:
     image: woodpeckerci/plugin-docker-buildx:6.0.1
