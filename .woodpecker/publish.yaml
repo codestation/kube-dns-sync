@@ -22,17 +22,32 @@ steps:
       registry: registry.megpoid.dev
       repo: registry.megpoid.dev/codestation/kube-dns-sync
       tags:
+        - '${CI_COMMIT_BRANCH}'
+        - '${CI_COMMIT_BRANCH}-${CI_COMMIT_SHA:0:10}'
+      config:
+        from_secret: registry_credentials
+
+  build-tag:
+    image: woodpeckerci/plugin-docker-buildx:6.0.1
+    settings:
+      registry: registry.megpoid.dev
+      repo: registry.megpoid.dev/codestation/kube-dns-sync
+      tags:
         - latest
+        - ${CI_COMMIT_TAG##v}
         - '${CI_COMMIT_BRANCH}'
         - '${CI_COMMIT_BRANCH}-${CI_COMMIT_SHA:0:10}'
       build_args:
-        CI_COMMIT_TAG: ${CI_COMMIT_TAG}
+        CI_COMMIT_TAG: "${CI_COMMIT_TAG}"
       config:
         from_secret: registry_credentials
+    when:
+      event: tag
 
 when:
   event:
     - push
+    - tag
     - manual
   branch:
     - master
