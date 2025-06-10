@@ -27,7 +27,7 @@ steps:
       config:
         from_secret: registry_credentials
     when:
-      event: 
+      event:
         - push
         - manual
 

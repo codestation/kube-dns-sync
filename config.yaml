@@ -1,16 +1,12 @@
 global:
-  provider: cloudflare
-  token: xxxx
+  provider: linode
   interval: 5m
 dns:
-  - hostname: sub1
-    zone: example.com
-    ttl: 5m
+  - hostname: vpn
+    zone: assetec.org
     labels:
-      example/role: infra
-  - hostname: sub2
-    zone: example.org
-    ttl: 5m
+      assetec.org/role: infrastructure
+  - hostname: vm-swarm
+    zone: assetec.org
     labels:
-      example/role: apps
-      other-label: test
+      assetec.org/role: infrastructure

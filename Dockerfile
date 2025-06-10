@@ -30,4 +30,4 @@ COPY --from=builder /src/release/kube-dns-sync /usr/bin/kube-dns-sync
 
 USER runner
 
-CMD ["/usr/bin/kube-dns-sync"]
+CMD ["/usr/bin/kube-dns-sync", "--config", "/etc/kube-dns-sync/config.yaml"]

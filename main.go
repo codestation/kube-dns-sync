@@ -200,7 +200,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	f.String("conf", "config.yaml", "Config file")
+	f.String("config", "config.yaml", "Config file")
 	f.String("token", "", "DNS Provider API token")
 	f.String("kubeconfig", "", "Path to the kubeconfig file")
 	f.String("log-format", "", "Log format (logfmt, json)")
@@ -212,17 +212,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	configFile, err := f.GetString("conf")
+	configFile, err := f.GetString("config")
 	if err != nil {
 		slog.Error("Failed to get config file", "error", err)
 		os.Exit(1)
 	}
 
+	// load config from file
+	slog.Info("Using config file", "file", configFile)
 	if err := k.Load(file.Provider(configFile), yaml.Parser()); err != nil {
 		slog.Error("Failed to load config file", "file", configFile, "error", err)
 		os.Exit(1)
 	}
 
+	// load config from env
 	err = k.Load(env.Provider("APP_", ".", func(s string) string {
 		return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(s, "APP_")), "_", ".")
 	}), nil)
@@ -231,17 +234,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	var dnsConfig Config
-	if err := k.Unmarshal("", &dnsConfig); err != nil {
-		slog.Error("Failed to parse config", "error", err)
-		os.Exit(1)
-	}
-
+	// load config from flags
 	err = k.Load(posflag.ProviderWithValue(f, ".", k, func(key string, value string) (string, any) {
 		return strings.ReplaceAll(key, "-", "."), value
 	}), nil)
 	if err != nil {
 		slog.Error("Failed to load flags", "error", err)
+		os.Exit(1)
+	}
+
+	var dnsConfig Config
+	if err := k.Unmarshal("", &dnsConfig); err != nil {
+		slog.Error("Failed to parse config", "error", err)
 		os.Exit(1)
 	}
 
@@ -273,6 +277,13 @@ func main() {
 	if len(dnsConfig.DNS) == 0 {
 		slog.Error("No DNS provider configuration specified")
 		os.Exit(1)
+	}
+
+	for idx, cfg := range dnsConfig.DNS {
+		if cfg.Hostname == "" || cfg.Zone == "" {
+			slog.Error("DNS provider configuration does not contain hostname or zone information", "index", idx)
+			os.Exit(1)
+		}
 	}
 
 	// Get DNS provider and hostname from environment variables
