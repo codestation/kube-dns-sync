@@ -16,7 +16,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/env"
+	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/providers/posflag"
 	"github.com/knadh/koanf/v2"
 	"github.com/libdns/cloudflare"
@@ -39,9 +41,21 @@ type Provider interface {
 }
 
 type DNSConfig struct {
-	Hostname string
-	Zone     string
-	TTL      time.Duration
+	Hostname string            `yaml:"hostname"`
+	Zone     string            `yaml:"zone"`
+	Labels   map[string]string `yaml:"labels"`
+	TTL      time.Duration     `yaml:"ttl"`
+}
+
+type GlobalConfig struct {
+	Provider string        `yaml:"provider"`
+	Token    string        `yaml:"token"`
+	Interval time.Duration `yaml:"interval"`
+}
+
+type Config struct {
+	Global GlobalConfig `yaml:"global"`
+	DNS    []DNSConfig  `yaml:"dns"`
 }
 
 var ErrNotAddressRecord = errors.New("the type must be an A/AAAA record")
@@ -78,15 +92,16 @@ func syncHostnameIPs(ctx context.Context, provider Provider, config DNSConfig, a
 		}
 	}
 
-	slog.Info("Deleting stale records", "count", len(recordsToDelete))
-	_, err = provider.DeleteRecords(ctx, config.Zone, recordsToDelete)
-	if err != nil {
-		return fmt.Errorf("failed to delete records: %w", err)
+	if len(recordsToDelete) > 0 {
+		slog.Info("Deleting stale records", "count", len(recordsToDelete))
+		_, err = provider.DeleteRecords(ctx, config.Zone, recordsToDelete)
+		if err != nil {
+			return fmt.Errorf("failed to delete records: %w", err)
+		}
 	}
 
 	var recordsToCreate []libdns.Record
 	for _, address := range addresses {
-
 		exists := slices.ContainsFunc(records, func(nodeRecord libdns.Record) bool {
 			rAddress, err := parseAddress(nodeRecord)
 			if err != nil && !errors.Is(err, ErrNotAddressRecord) {
@@ -106,10 +121,12 @@ func syncHostnameIPs(ctx context.Context, provider Provider, config DNSConfig, a
 		}
 	}
 
-	slog.Info("Creating new records", "count", len(recordsToCreate))
-	_, err = provider.SetRecords(ctx, config.Zone, recordsToCreate)
-	if err != nil {
-		return fmt.Errorf("failed to create records: %w", err)
+	if len(recordsToCreate) > 0 {
+		slog.Info("Creating new records", "count", len(recordsToCreate))
+		_, err = provider.SetRecords(ctx, config.Zone, recordsToCreate)
+		if err != nil {
+			return fmt.Errorf("failed to create records: %w", err)
+		}
 	}
 
 	slog.Info("Sync complete")
@@ -154,9 +171,13 @@ func getClusterExternalIPs(ctx context.Context, clientSet *kubernetes.Clientset,
 	return nodes.ResourceVersion, addresses, nil
 }
 
-func watchNodes(ctx context.Context, clientSet *kubernetes.Clientset, provider Provider, config DNSConfig, labels string) error {
+func watchNodes(ctx context.Context, clientSet *kubernetes.Clientset, provider Provider, config DNSConfig) error {
+	var result []string
+	for k, v := range config.Labels {
+		result = append(result, fmt.Sprintf("%s=%s", k, v))
+	}
 	// Get the external IPs of the cluster nodes
-	_, addresses, err := getClusterExternalIPs(ctx, clientSet, labels)
+	_, addresses, err := getClusterExternalIPs(ctx, clientSet, strings.Join(result, ","))
 	if err != nil {
 		return fmt.Errorf("failed to get cluster external IPs: %w", err)
 	}
@@ -173,7 +194,36 @@ func watchNodes(ctx context.Context, clientSet *kubernetes.Clientset, provider P
 var k = koanf.New(".")
 
 func main() {
-	err := k.Load(env.Provider("APP_", ".", func(s string) string {
+	f := flag.NewFlagSet("config", flag.ContinueOnError)
+	f.Usage = func() {
+		fmt.Println(f.FlagUsages())
+		os.Exit(0)
+	}
+
+	f.String("conf", "config.yaml", "Config file")
+	f.String("token", "", "DNS Provider API token")
+	f.String("kubeconfig", "", "Path to the kubeconfig file")
+	f.String("log-format", "", "Log format (logfmt, json)")
+	f.Bool("version", false, "Print version information")
+
+	err := f.Parse(os.Args[1:])
+	if err != nil {
+		slog.Error("Failed to parse flags", "error", err)
+		os.Exit(1)
+	}
+
+	configFile, err := f.GetString("conf")
+	if err != nil {
+		slog.Error("Failed to get config file", "error", err)
+		os.Exit(1)
+	}
+
+	if err := k.Load(file.Provider(configFile), yaml.Parser()); err != nil {
+		slog.Error("Failed to load config file", "file", configFile, "error", err)
+		os.Exit(1)
+	}
+
+	err = k.Load(env.Provider("APP_", ".", func(s string) string {
 		return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(s, "APP_")), "_", ".")
 	}), nil)
 	if err != nil {
@@ -181,26 +231,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	f := flag.NewFlagSet("config", flag.ContinueOnError)
-	f.Usage = func() {
-		fmt.Println(f.FlagUsages())
-		os.Exit(0)
-	}
-
-	f.String("dns-provider", "", "DNS provider (cloudflare, digitalocean, linode)")
-	f.String("dns-hostname", "", "DNS hostname")
-	f.String("dns-zone", "", "DNS zone")
-	f.Duration("dns-ttl", 0, "DNS TTL")
-	f.String("dns-token", "", "DNS Provider API token")
-	f.String("kubeconfig", "", "Path to the kubeconfig file")
-	f.Duration("watch-interval", time.Minute, "Interval to watch nodes")
-	f.String("node-labels", "", "Labels to filter nodes")
-	f.String("log-format", "", "Log format (logfmt, json)")
-	f.Bool("version", false, "Print version information")
-
-	err = f.Parse(os.Args[1:])
-	if err != nil {
-		slog.Error("Failed to parse flags", "error", err)
+	var dnsConfig Config
+	if err := k.Unmarshal("", &dnsConfig); err != nil {
+		slog.Error("Failed to parse config", "error", err)
 		os.Exit(1)
 	}
 
@@ -237,16 +270,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Get DNS provider and hostname from environment variables
-	dnsProvider := k.String("dns.provider")
-	dnsHostname := k.String("dns.hostname")
-	dnsZone := k.String("dns.zone")
-	dnsToken := k.String("dns.token")
-
-	if dnsProvider == "" || dnsHostname == "" || dnsZone == "" || dnsToken == "" {
-		slog.Error("Missing DNS provider, host, zone and token values")
+	if len(dnsConfig.DNS) == 0 {
+		slog.Error("No DNS provider configuration specified")
 		os.Exit(1)
 	}
+
+	// Get DNS provider and hostname from environment variables
+	dnsProvider := k.String("global.provider")
+	dnsToken := k.String("global.token")
 
 	var provider Provider
 
@@ -287,27 +318,30 @@ func main() {
 	termChan := make(chan os.Signal, 1)
 	signal.Notify(termChan, os.Interrupt)
 
-	dnsConfig := DNSConfig{
-		Hostname: dnsHostname,
-		Zone:     dnsZone,
-		TTL:      k.Duration("dns.ttl"),
-	}
-
-	interval := k.Duration("watch.interval")
-	labels := k.String("node.labels")
-
 	go func(ctx context.Context) {
 		for {
-			err := watchNodes(ctx, clientset, provider, dnsConfig, labels)
-			if err != nil {
-				slog.Error("Failed to watch nodes", "error", err)
+			for _, cfg := range dnsConfig.DNS {
+				slog.Info("Processing host", "name", cfg.Hostname)
+				err := watchNodes(ctx, clientset, provider, cfg)
+				if err != nil {
+					slog.Error("Failed to watch nodes", "error", err)
+				}
+
+				select {
+				case <-ctx.Done():
+					slog.Info("Exiting...")
+					close(finishChan)
+					return
+				default:
+				}
 			}
+
 			select {
 			case <-ctx.Done():
 				slog.Info("Exiting...")
 				close(finishChan)
 				return
-			case <-time.After(interval):
+			case <-time.After(dnsConfig.Global.Interval):
 			}
 		}
 	}(ctx)

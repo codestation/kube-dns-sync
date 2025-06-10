@@ -1,0 +1,16 @@
+global:
+  provider: cloudflare
+  token: xxxx
+  interval: 5m
+dns:
+  - hostname: sub1
+    zone: example.com
+    ttl: 5m
+    labels:
+      example/role: infra
+  - hostname: sub2
+    zone: example.org
+    ttl: 5m
+    labels:
+      example/role: apps
+      other-label: test
